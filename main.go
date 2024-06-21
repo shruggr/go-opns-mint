@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"os"
 	"runtime"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,11 @@ func init() {
 
 func main() {
 	r := gin.Default()
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	r.GET("/mine/:char/:pow", func(c *gin.Context) {
 		char := c.Param("char")[0]
 		pow, err := hex.DecodeString(c.Param("pow"))
@@ -40,8 +46,7 @@ func main() {
 		}
 		c.JSON(200, mine(char, pow))
 	})
-	r.Run() // listen and serve on 0.0.0.0:8080
-
+	r.Run(fmt.Sprintf(":%s", port)) // listen and serve on 0.0.0.0:8080
 }
 
 func mine(char byte, prevPow []byte) *Pow {
