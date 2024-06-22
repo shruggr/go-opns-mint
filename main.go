@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -39,7 +40,7 @@ func main() {
 
 	r.GET("/mine/:char/:pow", func(c *gin.Context) {
 		char := c.Param("char")[0]
-		pow, err := hex.DecodeString(c.Param("pow"))
+		pow, err := base64.StdEncoding.DecodeString(c.Param("pow"))
 		if err != nil {
 			c.String(400, "Invalid POW")
 			return
