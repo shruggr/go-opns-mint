@@ -1,89 +1,69 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
-	"math/big"
+	"log"
+	"net/http"
 	"os"
-	"runtime"
 
-	"github.com/gin-gonic/gin"
-	"github.com/libsv/go-bt/v2"
+	"github.com/bitcoin-sv/go-sdk/script"
+	"github.com/bitcoin-sv/go-sdk/transaction/template/p2pkh"
+	"github.com/gofiber/fiber/v2"
+	"github.com/joho/godotenv"
+	"github.com/shruggr/go-opns-mint/opns"
 )
 
-const DIFFICULTY = 22
-
-var comp = big.NewInt(0)
-var CONCURRENCY int
-var limit chan struct{}
-
-type Pow struct {
-	Nonce  string `json:"nonce"`
-	Hashes uint64 `json:"hashes"`
+func init() {
+	godotenv.Load(".env")
 }
 
-func init() {
-	CONCURRENCY = runtime.NumCPU()
-	limit = make(chan struct{}, CONCURRENCY)
-	fmt.Printf("Concurrency: %d\n", CONCURRENCY)
+type MineRequest struct {
+	Domain         string `json:"domain"`
+	OwnerAddress   string `json:"ownerAddress"`
+	FundingAddress string `json:"fundingAddress"`
 }
 
 func main() {
-	r := gin.Default()
+	app := fiber.New()
+
+	// Define a route for the GET method on the root path '/'
+	app.Post("/mine", func(c *fiber.Ctx) error {
+		req := &MineRequest{}
+		if err := c.BodyParser(req); err != nil {
+			log.Println("BodyParser", err)
+			return c.Status(http.StatusBadRequest).SendString(err.Error())
+		}
+		ownerAdd, err := script.NewAddressFromString(req.OwnerAddress)
+		if err != nil {
+			log.Println("NewAddressFromString", err)
+			return c.Status(http.StatusBadRequest).SendString(err.Error())
+		}
+		if ownerScript, err := p2pkh.Lock(ownerAdd); err != nil {
+			log.Println("Lock", err)
+			return c.Status(http.StatusBadRequest).SendString(err.Error())
+		} else if txid, err := opns.MineDomain(c.Context(), req.Domain, ownerScript); err != nil {
+			log.Println("MineDomain", err)
+			return c.Status(http.StatusInternalServerError).SendString(err.Error())
+		} else {
+			return c.SendString(txid)
+		}
+	})
+
+	app.Get("/refresh", func(c *fiber.Ctx) error {
+		if balance, err := opns.RefreshBalance(c.Context()); err != nil {
+			log.Println("RefreshBalance", err)
+			return c.Status(http.StatusInternalServerError).SendString(err.Error())
+		} else {
+			return c.JSON(balance)
+		}
+	})
+
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "3000"
 	}
 
-	r.GET("/mine/:char/:pow", func(c *gin.Context) {
-		char := c.Param("char")[0]
-		pow, err := base64.StdEncoding.DecodeString(c.Param("pow"))
-		if err != nil {
-			c.String(400, "Invalid POW")
-			return
-		}
-		c.JSON(200, mine(char, pow))
-	})
-	r.Run(fmt.Sprintf(":%s", port)) // listen and serve on 0.0.0.0:8080
-}
+	// Start the server
+	log.Fatal(app.Listen(fmt.Sprintf(":%s", port)))
 
-func mine(char byte, prevPow []byte) *Pow {
-	var done = make(chan *Pow)
-	counter := uint(0)
-	for {
-		select {
-		case nonce := <-done:
-			return nonce
-		default:
-			limit <- struct{}{}
-			go func() {
-				test := append([]byte{}, prevPow...)
-				test = append(test, char)
-				nonce := make([]byte, 32)
-				counter++
-				rand.Read(nonce)
-				// nonce, _ := hex.DecodeString("3ffd296edebfae7f")
-				test = append(test, nonce...)
-
-				hash := sha256.Sum256(test)
-				hash = sha256.Sum256(hash[:])
-
-				testInt := new(big.Int).SetBytes(bt.ReverseBytes(hash[:]))
-				testInt = testInt.Rsh(testInt, uint(256-DIFFICULTY))
-				<-limit
-				if testInt.Cmp(comp) == 0 {
-					fmt.Printf("Test: %b %x\n", testInt, bt.ReverseBytes(hash[:]))
-					fmt.Printf("Found: %x\n", nonce)
-					done <- &Pow{
-						Nonce:  hex.EncodeToString(nonce),
-						Hashes: uint64(counter),
-					}
-
-				}
-			}()
-		}
-	}
 }
